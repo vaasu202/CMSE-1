@@ -20,6 +20,11 @@ import base64
 import joblib
 import matplotlib.pyplot as plt
 import streamlit.components.v1 as components
+import warnings
+from sklearn.exceptions import ConvergenceWarning
+
+# Ignore only convergence warnings
+warnings.filterwarnings("ignore", category=ConvergenceWarning)
 
 def encode_gif(path):
     with open(path, "rb") as f:
