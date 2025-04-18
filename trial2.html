@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>EXO'25: AI vs Human</title>
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+  <style>
+    body {
+    background: url("whatineed2.png");
+    color: #ffa72c;
+    height: 100vh;  
+    font-family: 'Press Start 2P', monospace;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin: 0;
+    padding: 0;      
+    overflow-x: hidden;
+    box-sizing: border-box;
+    }
+
+    h1 {
+      font-size: 28px;
+      margin: 20px 0;
+      text-shadow: 3px 3px #000;
+      animation: flicker 1.5s infinite alternate;
+    }
+
+    @keyframes flicker {
+      0% { opacity: 1; }
+      100% { opacity: 0.85; }
+    }
+
+    .controls {
+      margin-bottom: 30px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 16px;
+      justify-content: center;
+    }
+
+    .controls button, .controls select {
+      background: #20233d;
+      color: #fff;
+      border: 3px solid #ff9f1c;
+      padding: 16px 22px;
+      border-radius: 8px;
+      font-family: 'Press Start 2P';
+      font-size: 12px;
+      cursor: pointer;
+      transition: transform 0.2s, background 0.2s;
+      box-shadow: 0 0 8px #ff9f1c;
+    }
+
+    .controls button:hover, .controls select:hover {
+      background: #cc5500;
+      transform: scale(1.1);
+    }
+
+    .main-container {
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      gap: 60px;
+      width: 100%;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(5, 80px);
+      gap: 10px;
+      margin-top: 10px;
+    }
+
+    .cell {
+      width: 80px;
+      height: 80px;
+      background-image: url('undiscovered.gif');
+      background-size: cover;
+      border-radius: 4px;
+      transition: 0.2s;
+      position: relative;
+    }
+
+    .agent {
+      background-image: url('astronaut.gif') !important;
+      background-size: cover !important;
+      animation: bounce 0.6s infinite alternate;
+    }
+
+    .visited {
+      filter: brightness(0.5);
+    }
+
+    .habitable::after {
+      content: '';
+      position: absolute;
+      width: 100%;
+      height: 100%;
+      background-image: url('habitable.gif');
+      background-size: contain;
+      background-repeat: no-repeat;
+      animation: glow 1s infinite alternate;
+    }
+
+    .optimal {
+      border: 3px solid #00f;
+      box-shadow: 0 0 15px #00f, inset 0 0 8px #00f;
+    }
+
+    .sidebar {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      font-size: 13px;
+      text-align: left;
+      max-width: 320px;
+    }
+
+    .sidebar p {
+      margin: 0;
+      line-height: 1.5;
+      text-shadow: 1px 1px #000;
+    }
+
+    @keyframes bounce {
+      from { transform: translateY(0); }
+      to { transform: translateY(-8px); }
+    }
+
+    @keyframes glow {
+      0% { filter: brightness(1); }
+      100% { filter: brightness(2); }
+    }
+
+    .rocket-wrapper {
+        position: relative;
+        width: 100%;
+        height: 100px;
+        margin-top: 40px;
+        overflow: hidden;
+        display: flex;
+        justify-content: center;
+        }
+
+    .rocket-loop {
+        position: relative;
+        height: 100px;
+        animation: rocketSlide 7s ease-in-out infinite alternate;
+    }
+
+    @keyframes rocketSlide {
+        0% {
+            transform: translateX(-550px);
+        }
+        100% {
+            transform: translateX(550px);
+        }
+     }
+
+
+  </style>
+</head>
+<body>
+  <h1>EXO'25: Human vs Agent</h1>
+
+  <div class="controls">
+    <select id="modeSelect" onchange="setMode(this.value)">
+      <option value="manual">🎮 Manual Mode</option>
+      <option value="agent">🤖 Agent Mode</option>
+    </select>
+    <button onclick="moveAgent('up')">⬆️</button>
+    <button onclick="moveAgent('down')">⬇️</button>
+    <button onclick="moveAgent('left')">⬅️</button>
+    <button onclick="moveAgent('right')">➡️</button>
+    <button onclick="resetGame()">🔁 Reset Grid</button>
+    <button onclick="retryBoard()">♻️ Retry Board</button>
+  </div>
+
+  <div class="main-container">
+    <div class="grid" id="grid"></div>
+    <div class="sidebar">
+      <p id="status">Use the buttons or let the agent play to find habitable planets!</p>
+      <p id="reward">Total Reward: 0</p>
+      <p id="budget">Remaining Budget: 15</p>
+      <p id="retries">Retries: 0</p>
+      <p id="max-reward">Best Run Reward: 0</p>
+    </div>
+  </div>
+
+  <script>
+    const GRID_SIZE = 5;
+    const maxBudget = 15;
+    const actions = ['up', 'down', 'left', 'right'];
+    let alpha = 0.1, gamma = 0.9, epsilon = 0.1;
+    let stableCount = 0, maxStable = 5;
+    let isTraining = false;
+
+    let totalReward = 0;
+    let stepsUsed = 0;
+    let retryCount = 0;
+    let bestReward = 0;
+    let bestPath = [];
+    let currentPath = [];
+    let agentPos = { x: 0, y: 0 };
+    let mode = 'manual';
+
+    let grid = [];
+    let Q = [];
+
+    function setMode(m) {
+      mode = m;
+      if (mode === 'agent') trainAgentLoop();
+    }
+
+    function initQ() {
+      Q = [];
+      for (let x = 0; x < GRID_SIZE; x++) {
+        Q[x] = [];
+        for (let y = 0; y < GRID_SIZE; y++) {
+          Q[x][y] = [0, 0, 0, 0];
+        }
+      }
+    }
+
+    function createGrid() {
+      const container = document.getElementById('grid');
+      container.innerHTML = '';
+      grid = [];
+
+      for (let x = 0; x < GRID_SIZE; x++) {
+        grid[x] = [];
+        for (let y = 0; y < GRID_SIZE; y++) {
+          const isHabitable = Math.random() < 0.3;
+          grid[x][y] = { habitable: isHabitable, visited: false };
+          const cell = document.createElement('div');
+          cell.id = `cell-${x}-${y}`;
+          cell.className = 'cell';
+          container.appendChild(cell);
+        }
+      }
+      agentPos = { x: 0, y: 0 };
+      highlightAgent(0, 0);
+    }
+
+    function highlightAgent(x, y) {
+      document.querySelectorAll('.cell').forEach(c => c.classList.remove('agent'));
+      const cell = document.getElementById(`cell-${x}-${y}`);
+      if (cell) cell.classList.add('agent');
+    }
+
+    function updateCell(x, y) {
+      const cell = document.getElementById(`cell-${x}-${y}`);
+      if (!cell || grid[x][y].visited) return;
+
+      grid[x][y].visited = true;
+      cell.classList.add('visited');
+      currentPath.push([x, y]);
+
+      if (grid[x][y].habitable) {
+        totalReward += 10;
+        cell.classList.add('habitable');
+        document.getElementById('status').textContent = `Planet (${x}, ${y}) is HABITABLE! +10`;
+      } else {
+        totalReward -= 2;
+        document.getElementById('status').textContent = `Planet (${x}, ${y}) is NOT habitable. -2`;
+      }
+
+      updateStats();
+    }
+
+    function updateStats() {
+      document.getElementById('reward').textContent = `Total Reward: ${totalReward}`;
+      document.getElementById('budget').textContent = `Remaining Budget: ${maxBudget - stepsUsed}`;
+      document.getElementById('retries').textContent = `Retries: ${retryCount}`;
+      document.getElementById('max-reward').textContent = `Best Run Reward: ${bestReward}`;
+    }
+
+    function drawOptimalPath() {
+      bestPath.forEach(([px, py]) => {
+        const cell = document.getElementById(`cell-${px}-${py}`);
+        if (cell) cell.classList.add('optimal');
+      });
+    }
+
+    async function trainAgentLoop() {
+      if (isTraining || mode !== 'agent') return;
+      isTraining = true;
+      stableCount = 0;
+      while (stableCount < maxStable) {
+        retryBoard();
+        currentPath = [[0, 0]];
+        while (stepsUsed < maxBudget) {
+          await new Promise(res => setTimeout(res, 400)); // 👈 Slower agent speed
+          qLearningStep();
+        }
+        if (totalReward > bestReward) {
+          bestReward = totalReward;
+          bestPath = [...currentPath];
+          stableCount = 0;
+        } else {
+          stableCount++;
+        }
+        epsilon = Math.max(epsilon * 0.95, 0.01);
+      }
+      document.getElementById('status').textContent = "✅ Optimal policy found!";
+      drawOptimalPath();
+      isTraining = false;
+    }
+
+    function qLearningStep() {
+      const { x, y } = agentPos;
+      const validMoves = actions.map((a, i) => ({ action: a, index: i })).filter(({ action }) => {
+        let [nx, ny] = movePreview(x, y, action);
+        return nx >= 0 && ny >= 0 && nx < GRID_SIZE && ny < GRID_SIZE && !grid[nx][ny].visited;
+      });
+
+      if (validMoves.length === 0) {
+        document.getElementById('status').textContent = `🚫 Agent stuck! Resetting to start.`;
+        agentPos = { x: 0, y: 0 };
+        highlightAgent(0, 0);
+        currentPath.push([0, 0]);
+        return;
+      }
+
+      let chosen;
+      if (Math.random() < epsilon) {
+        chosen = validMoves[Math.floor(Math.random() * validMoves.length)];
+      } else {
+        let best = validMoves.reduce((a, b) => Q[x][y][a.index] > Q[x][y][b.index] ? a : b);
+        chosen = best;
+      }
+
+      const [nx, ny] = movePreview(x, y, chosen.action);
+      const reward = grid[nx][ny].habitable ? 10 : -2;
+      const maxQ = Math.max(...Q[nx][ny]);
+      Q[x][y][chosen.index] += alpha * (reward + gamma * maxQ - Q[x][y][chosen.index]);
+
+      agentPos = { x: nx, y: ny };
+      highlightAgent(nx, ny);
+      updateCell(nx, ny);
+      stepsUsed++;
+    }
+
+    function moveAgent(dir) {
+      if (mode !== 'manual') return;
+      if (stepsUsed >= maxBudget) return;
+
+      const { x, y } = agentPos;
+      let nx = x, ny = y;
+      if (dir === 'up') nx--;
+      if (dir === 'down') nx++;
+      if (dir === 'left') ny--;
+      if (dir === 'right') ny++;
+      if (nx < 0 || ny < 0 || nx >= GRID_SIZE || ny >= GRID_SIZE) return;
+      if (grid[nx][ny].visited) return;
+
+      agentPos = { x: nx, y: ny };
+      highlightAgent(nx, ny);
+      updateCell(nx, ny);
+      stepsUsed++;
+      updateStats();
+    }
+
+    function movePreview(x, y, dir) {
+      if (dir === 'up') return [x - 1, y];
+      if (dir === 'down') return [x + 1, y];
+      if (dir === 'left') return [x, y - 1];
+      if (dir === 'right') return [x, y + 1];
+    }
+
+    function resetGame() {
+      totalReward = 0;
+      stepsUsed = 0;
+      retryCount = 0;
+      bestReward = 0;
+      bestPath = [];
+      epsilon = 0.1;
+      agentPos = { x: 0, y: 0 };
+      createGrid();
+      initQ();
+      updateStats();
+      document.getElementById('status').textContent = "New Grid. Train again!";
+    }
+
+    function retryBoard() {
+      if (totalReward > bestReward) bestReward = totalReward;
+      totalReward = 0;
+      stepsUsed = 0;
+      retryCount++;
+      agentPos = { x: 0, y: 0 };
+      currentPath = [[0, 0]];
+
+      for (let x = 0; x < GRID_SIZE; x++) {
+        for (let y = 0; y < GRID_SIZE; y++) {
+          const cell = document.getElementById(`cell-${x}-${y}`);
+          cell.classList.remove('visited', 'agent', 'habitable', 'optimal');
+          grid[x][y].visited = false;
+        }
+      }
+
+      highlightAgent(0, 0);
+      updateStats();
+      document.getElementById('status').textContent = "Retry attempt " + retryCount;
+    }
+
+    createGrid();
+    initQ();
+    updateStats();
+  </script>
+  <div class="rocket-wrapper">
+    <img src="spaceshipineed.gif" alt="Flying Rocket" class="rocket-loop">
+  </div>
+</body>
+</html>
